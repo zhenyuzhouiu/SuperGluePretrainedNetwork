@@ -112,14 +112,14 @@ if __name__ == '__main__':
         help='SuperGlue match threshold')
 
     parser.add_argument(
-        '--viz', action='store_true',
+        '--viz', type=bool, default=True,
         help='Visualize the matches and dump the plots')
     parser.add_argument(
         '--eval', action='store_true',
         help='Perform the evaluation'
              ' (requires ground truth pose and intrinsics)')
     parser.add_argument(
-        '--fast_viz', action='store_true',
+        '--fast_viz', type=bool, default=True,
         help='Use faster image visualization with OpenCV instead of Matplotlib')
     parser.add_argument(
         '--cache', action='store_true',
@@ -131,7 +131,7 @@ if __name__ == '__main__':
         '--viz_extension', type=str, default='png', choices=['png', 'pdf'],
         help='Visualization file extension. Use pdf for highest-quality.')
     parser.add_argument(
-        '--opencv_display', action='store_true',
+        '--opencv_display', type=bool, default=True,
         help='Visualize via OpenCV before saving output images')
     parser.add_argument(
         '--shuffle', action='store_true',

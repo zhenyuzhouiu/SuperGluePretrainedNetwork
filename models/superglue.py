@@ -50,6 +50,10 @@ from torch import nn
 
 def MLP(channels: List[int], do_bn: bool = True) -> nn.Module:
     """ Multi-layer perceptron """
+    # in generally, n:-> 6
+    # [3] + layers:-> [32, 64, 128, 256] + [feature_dim (descriptor_dim)]:-> 256
+    # 3:-> keypoint position x, y & keypoint score s
+    # 256:-> descriptor dimension
     n = len(channels)
     layers = []
     for i in range(1, n):
@@ -65,6 +69,7 @@ def MLP(channels: List[int], do_bn: bool = True) -> nn.Module:
 def normalize_keypoints(kpts, image_shape):
     """ Normalize keypoints locations based on image image_shape"""
     _, _, height, width = image_shape
+    # generated type of tensor(1) is same as kpts
     one = kpts.new_tensor(1)
     size = torch.stack([one*width, one*height])[None]
     center = size / 2
@@ -76,10 +81,13 @@ class KeypointEncoder(nn.Module):
     """ Joint encoding of visual appearance and location using MLPs"""
     def __init__(self, feature_dim: int, layers: List[int]) -> None:
         super().__init__()
+        # [3] + layers:-> [32, 64, 128, 256] + [feature_dim (descriptor_dim)]:-> 256
         self.encoder = MLP([3] + layers + [feature_dim])
         nn.init.constant_(self.encoder[-1].bias, 0.0)
 
     def forward(self, kpts, scores):
+        # kpts.shape():-> [b, num_keypoints, 2]
+        # scores.shape():-> [b, num_keypoints]
         inputs = [kpts.transpose(1, 2), scores.unsqueeze(1)]
         return self.encoder(torch.cat(inputs, dim=1))
 
@@ -92,7 +100,7 @@ def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tu
 
 
 class MultiHeadedAttention(nn.Module):
-    """ Multi-head attention to increase model expressivitiy """
+    """ Multi-head attention to increase model expressivity """
     def __init__(self, num_heads: int, d_model: int):
         super().__init__()
         assert d_model % num_heads == 0
@@ -125,7 +133,7 @@ class AttentionalGNN(nn.Module):
     def __init__(self, feature_dim: int, layer_names: List[str]) -> None:
         super().__init__()
         self.layers = nn.ModuleList([
-            AttentionalPropagation(feature_dim, 4)
+            AttentionalPropagation(feature_dim, 4)  # (feature_dim, num_head)
             for _ in range(len(layer_names))])
         self.names = layer_names
 
@@ -229,7 +237,9 @@ class SuperGlue(nn.Module):
 
     def forward(self, data):
         """Run SuperGlue on a pair of keypoints and descriptors"""
+        # descriptors.shape():-> [b, 256, num_keypoints]
         desc0, desc1 = data['descriptors0'], data['descriptors1']
+        # kpts0.shape():-> [b, num_keypoints, 2]
         kpts0, kpts1 = data['keypoints0'], data['keypoints1']
 
         if kpts0.shape[1] == 0 or kpts1.shape[1] == 0:  # no keypoints
@@ -242,10 +252,12 @@ class SuperGlue(nn.Module):
             }
 
         # Keypoint normalization.
+        # normalize keypoints locations based on image image_shape
         kpts0 = normalize_keypoints(kpts0, data['image0'].shape)
         kpts1 = normalize_keypoints(kpts1, data['image1'].shape)
 
         # Keypoint MLP encoder.
+        # visual descriptor + keypoint encoder
         desc0 = desc0 + self.kenc(kpts0, data['scores0'])
         desc1 = desc1 + self.kenc(kpts1, data['scores1'])
 
