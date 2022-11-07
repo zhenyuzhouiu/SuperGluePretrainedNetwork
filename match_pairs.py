@@ -57,7 +57,7 @@ from models.utils import (compute_pose_error, compute_epipolar_error,
                           estimate_pose, make_matching_plot,
                           error_colormap, AverageTimer, pose_auc, read_image,
                           rotate_intrinsics, rotate_pose_inplane,
-                          scale_intrinsics)
+                          scale_intrinsics, read_fingerknuckle)
 
 torch.set_grad_enabled(False)
 
@@ -68,10 +68,10 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     parser.add_argument(
-        '--input_pairs', type=str, default='assets/scannet_sample_pairs_with_gt.txt',
+        '--input_pairs', type=str, default='assets/fingerknuckle_test_pairs.txt',
         help='Path to the list of image pairs')
     parser.add_argument(
-        '--input_dir', type=str, default='assets/scannet_sample_images/',
+        '--input_dir', type=str, default='assets/fingerknuckle_test_images/',
         help='Path to the directory that contains the images')
     parser.add_argument(
         '--output_dir', type=str, default='dump_match_pairs/',
@@ -82,7 +82,7 @@ if __name__ == '__main__':
         '--max_length', type=int, default=-1,
         help='Maximum number of pairs to evaluate')
     parser.add_argument(
-        '--resize', type=int, nargs='+', default=[640, 480],
+        '--resize', type=int, nargs='+', default=[184, 208],
         help='Resize the input image before running inference. If two numbers, '
              'resize to the exact dimensions, if one number, resize the max '
              'dimension, if -1, do not resize')
@@ -91,7 +91,7 @@ if __name__ == '__main__':
         help='Resize the image after casting uint8 to float')
 
     parser.add_argument(
-        '--superglue', choices={'indoor', 'outdoor'}, default='indoor',
+        '--superglue', choices={'indoor', 'outdoor'}, default='outdoor',
         help='SuperGlue weights')
     parser.add_argument(
         '--max_keypoints', type=int, default=1024,
@@ -105,10 +105,10 @@ if __name__ == '__main__':
         help='SuperPoint Non Maximum Suppression (NMS) radius'
         ' (Must be positive)')
     parser.add_argument(
-        '--sinkhorn_iterations', type=int, default=20,
+        '--sinkhorn_iterations', type=int, default=30,
         help='Number of Sinkhorn iterations performed by SuperGlue')
     parser.add_argument(
-        '--match_threshold', type=float, default=0.2,
+        '--match_threshold', type=float, default=0.1,
         help='SuperGlue match threshold')
 
     parser.add_argument(
@@ -259,9 +259,13 @@ if __name__ == '__main__':
             rot0, rot1 = 0, 0
 
         # Load the image pair.
-        image0, inp0, scales0 = read_image(
+        # image0, inp0, scales0 = read_image(
+        #     input_dir / name0, device, opt.resize, rot0, opt.resize_float)
+        # image1, inp1, scales1 = read_image(
+        #     input_dir / name1, device, opt.resize, rot1, opt.resize_float)
+        image0, inp0, scales0 = read_fingerknuckle(
             input_dir / name0, device, opt.resize, rot0, opt.resize_float)
-        image1, inp1, scales1 = read_image(
+        image1, inp1, scales1 = read_fingerknuckle(
             input_dir / name1, device, opt.resize, rot1, opt.resize_float)
         if image0 is None or image1 is None:
             print('Problem reading image pair: {} {}'.format(
