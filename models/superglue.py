@@ -59,7 +59,7 @@ def MLP(channels: List[int], do_bn: bool = True) -> nn.Module:
     for i in range(1, n):
         layers.append(
             nn.Conv1d(channels[i - 1], channels[i], kernel_size=1, bias=True))
-        if i < (n-1):
+        if i < (n - 1):
             if do_bn:
                 layers.append(nn.BatchNorm1d(channels[i]))
             layers.append(nn.ReLU())
@@ -71,7 +71,7 @@ def normalize_keypoints(kpts, image_shape):
     _, _, height, width = image_shape
     # generated type of tensor(1) is same as kpts
     one = kpts.new_tensor(1)
-    size = torch.stack([one*width, one*height])[None]
+    size = torch.stack([one * width, one * height])[None]
     center = size / 2
     scaling = size.max(1, keepdim=True).values * 0.7
     return (kpts - center[:, None, :]) / scaling[:, None, :]
@@ -79,6 +79,7 @@ def normalize_keypoints(kpts, image_shape):
 
 class KeypointEncoder(nn.Module):
     """ Joint encoding of visual appearance and location using MLPs"""
+
     def __init__(self, feature_dim: int, layers: List[int]) -> None:
         super().__init__()
         # [3] + layers:-> [32, 64, 128, 256] + [feature_dim (descriptor_dim)]:-> 256
@@ -92,39 +93,61 @@ class KeypointEncoder(nn.Module):
         return self.encoder(torch.cat(inputs, dim=1))
 
 
-def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
+def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    input dimension:-> [b, dim, num_heads, num_keypoint]
+    dim = d_model // num_heads
+    d_model = dimension of input keypoint features, eg. 256
+    """
     dim = query.shape[1]
-    scores = torch.einsum('bdhn,bdhm->bhnm', query, key) / dim**.5
+    # Einstein Summation:-> torch.einsum(equation, operands)
+    # equation is a string representing the Einstein summation
+    # operands is a sequence of tensors
+    # b:-> batch size; d:-> dim; h:-> num_heads
+    scores = torch.einsum('bdhn,bdhm->bhnm', query, key) / dim ** .5
     prob = torch.nn.functional.softmax(scores, dim=-1)
     return torch.einsum('bhnm,bdhm->bdhn', prob, value), prob
 
 
 class MultiHeadedAttention(nn.Module):
-    """ Multi-head attention to increase model expressivity """
+    """
+    Multi-head attention to increase model expressivity
+    self.num_heads
+    self.d_model:-> dimension of input feature
+    """
+
     def __init__(self, num_heads: int, d_model: int):
         super().__init__()
+        # //:-> floor division; %:-> modulus
+        # if condition returns True, then nothing happens
         assert d_model % num_heads == 0
         self.dim = d_model // num_heads
         self.num_heads = num_heads
         self.merge = nn.Conv1d(d_model, d_model, kernel_size=1)
+        # self.proj:-> repeat 3 times for getting query, key, value
         self.proj = nn.ModuleList([deepcopy(self.merge) for _ in range(3)])
 
     def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
         batch_dim = query.size(0)
+        # input query.shape():-> [b, d_model, num_points]
+        # zip() function returns a zip object, which is an iterator
+        # l is the self.proj, x is the (query, key, value)
+        # query, key, value.shape():-> [b, self.dim, self.num_heads, num_keypoint]
         query, key, value = [l(x).view(batch_dim, self.dim, self.num_heads, -1)
                              for l, x in zip(self.proj, (query, key, value))]
         x, _ = attention(query, key, value)
-        return self.merge(x.contiguous().view(batch_dim, self.dim*self.num_heads, -1))
+        return self.merge(x.contiguous().view(batch_dim, self.dim * self.num_heads, -1))
 
 
 class AttentionalPropagation(nn.Module):
     def __init__(self, feature_dim: int, num_heads: int):
         super().__init__()
         self.attn = MultiHeadedAttention(num_heads, feature_dim)
-        self.mlp = MLP([feature_dim*2, feature_dim*2, feature_dim])
+        self.mlp = MLP([feature_dim * 2, feature_dim * 2, feature_dim])
         nn.init.constant_(self.mlp[-1].bias, 0.0)
 
     def forward(self, x: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
+        # self.attn(query, key, value)
         message = self.attn(x, source, source)
         return self.mlp(torch.cat([x, message], dim=1))
 
@@ -137,7 +160,7 @@ class AttentionalGNN(nn.Module):
             for _ in range(len(layer_names))])
         self.names = layer_names
 
-    def forward(self, desc0: torch.Tensor, desc1: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
+    def forward(self, desc0: torch.Tensor, desc1: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         for layer, name in zip(self.layers, self.names):
             if name == 'cross':
                 src0, src1 = desc1, desc0
@@ -161,7 +184,7 @@ def log_optimal_transport(scores: torch.Tensor, alpha: torch.Tensor, iters: int)
     """ Perform Differentiable Optimal Transport in Log-space for stability"""
     b, m, n = scores.shape
     one = scores.new_tensor(1)
-    ms, ns = (m*one).to(scores), (n*one).to(scores)
+    ms, ns = (m * one).to(scores), (n * one).to(scores)
 
     bins0 = alpha.expand(b, m, 1)
     bins1 = alpha.expand(b, 1, n)
@@ -257,7 +280,7 @@ class SuperGlue(nn.Module):
         kpts1 = normalize_keypoints(kpts1, data['image1'].shape)
 
         # Keypoint MLP encoder.
-        # visual descriptor + keypoint encoder
+        # visual descriptor + keypoint encoder (input:-> (x, y, score) output:-> descriptor dimension)
         desc0 = desc0 + self.kenc(kpts0, data['scores0'])
         desc1 = desc1 + self.kenc(kpts1, data['scores1'])
 
@@ -269,7 +292,7 @@ class SuperGlue(nn.Module):
 
         # Compute matching descriptor distance.
         scores = torch.einsum('bdn,bdm->bnm', mdesc0, mdesc1)
-        scores = scores / self.config['descriptor_dim']**.5
+        scores = scores / self.config['descriptor_dim'] ** .5
 
         # Run the optimal transport.
         scores = log_optimal_transport(
@@ -290,8 +313,8 @@ class SuperGlue(nn.Module):
         indices1 = torch.where(valid1, indices1, indices1.new_tensor(-1))
 
         return {
-            'matches0': indices0, # use -1 for invalid match
-            'matches1': indices1, # use -1 for invalid match
+            'matches0': indices0,  # use -1 for invalid match
+            'matches1': indices1,  # use -1 for invalid match
             'matching_scores0': mscores0,
             'matching_scores1': mscores1,
         }
