@@ -98,17 +98,25 @@ def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tu
     input dimension:-> [b, dim, num_heads, num_keypoint]
     dim = d_model // num_heads
     d_model = dimension of input keypoint features, eg. 256
+    Z = softmax(Q(K^T)/(d_k)**0.5)V
     """
     dim = query.shape[1]
     # Einstein Summation:-> torch.einsum(equation, operands)
     # equation is a string representing the Einstein summation
     # operands is a sequence of tensors
-    # b:-> batch size; d:-> dim; h:-> num_heads
+    # b:-> batch size; d:-> dim; h:-> num_heads, n or m is the number of keypoint
+    # scores =  scores / (d_K)**0.5 for getting stable backpropagation; d_K is the last layer input feature dimension
+    # self_attention: n = m; cross_attention: n != m
     scores = torch.einsum('bdhn,bdhm->bhnm', query, key) / dim ** .5
     prob = torch.nn.functional.softmax(scores, dim=-1)
     return torch.einsum('bhnm,bdhm->bdhn', prob, value), prob
 
 
+# Multi-head attention: 1). using multiple self-attention heads
+# (using one Wq, Wk, Wv same as normal self-attention,
+# the difference is that split q, k, y to num_heads for calculating the similarity score respectively)
+# ===================== 2). concatenate multiple attention feature
+# ===================== 3). linear transform
 class MultiHeadedAttention(nn.Module):
     """
     Multi-head attention to increase model expressivity
@@ -135,11 +143,17 @@ class MultiHeadedAttention(nn.Module):
         # query, key, value.shape():-> [b, self.dim, self.num_heads, num_keypoint]
         query, key, value = [l(x).view(batch_dim, self.dim, self.num_heads, -1)
                              for l, x in zip(self.proj, (query, key, value))]
+        # attention(q, k, v) return x, normalized_scores
+        # x.shape():-> [b, self.dim, self.num_heads, num_keypoint]
         x, _ = attention(query, key, value)
         return self.merge(x.contiguous().view(batch_dim, self.dim * self.num_heads, -1))
 
 
 class AttentionalPropagation(nn.Module):
+    """
+    the architecture of the modul is similar with the encoder block of transformer model
+    AttentionalPropagation = attention_layer (residual self-attention) + mlp_layer (feed_forward)
+    """
     def __init__(self, feature_dim: int, num_heads: int):
         super().__init__()
         self.attn = MultiHeadedAttention(num_heads, feature_dim)
@@ -148,11 +162,18 @@ class AttentionalPropagation(nn.Module):
 
     def forward(self, x: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
         # self.attn(query, key, value)
+        # message.shape():-> [b, feature_dim, num_keypoint]
         message = self.attn(x, source, source)
+        # torch.cat([x, message]) is a residual connection
+        # message is the output of attention, x is the input
+        # transformer model also have residual connection on each self-attention block
         return self.mlp(torch.cat([x, message], dim=1))
 
 
 class AttentionalGNN(nn.Module):
+    """
+    input: keypoint_descriptors + KeypointEncoder(torch.cat(keypoint_position, keypoint_score))
+    """
     def __init__(self, feature_dim: int, layer_names: List[str]) -> None:
         super().__init__()
         self.layers = nn.ModuleList([
